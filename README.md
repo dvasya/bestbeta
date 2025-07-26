@@ -54,7 +54,7 @@ python scripts/find_beta.py -l 0.2 -u 0.8 -c 0.95 --outside_odds maxent
 
 ## Credits and Acknowledgements
 
--   Inspired by (@NunoSempere)[https://twitter.com/NunoSempere]'s `fit-beta` ([GitHub](https://github.com/quantified-uncertainty/fit-beta), [blog](https://nunosempere.com/blog/2023/03/15/fit-beta/)).
+-   Inspired by [@NunoSempere](https://twitter.com/NunoSempere)'s `fit-beta` ([GitHub](https://github.com/quantified-uncertainty/fit-beta), [blog](https://nunosempere.com/blog/2023/03/15/fit-beta/)).
 -   Uses ["Derivatives of the Incomplete Beta Function"](https://www.jstatsoft.org/article/view/v003i01) (Journal of Statistical Software, Vol. 3, No. 1, 2000), as implemented in the `betaincder` library.
 -   Built with [Gemini CLI](https://github.com/google/gemini-cli).
 
