@@ -2,30 +2,34 @@
 Streamlit application for finding beta distributions.
 """
 
+import warnings
 from math import isclose
 from typing import Any
 
-import streamlit as st
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import numpy as np
+import streamlit as st
 from scipy.stats import beta as beta_dist
 
-from bestbeta.solver import find_beta_distribution
+from bestbeta.solver import beta_entropy, find_beta_distribution
 
 st.set_page_config(layout="centered", page_icon="🎲", page_title="Best Beta")
 
 st.title("Best Beta")
 
-st.markdown("""
-Finds the beta distribution that corresponds to a given confidence interval [[🔗 GitHub]](https://github.com/dvasya/bestbeta).
-""")
+st.markdown(
+    """
+Finds the beta distribution that corresponds to a given confidence interval
+[[🔗 GitHub]](https://github.com/dvasya/bestbeta).
+"""
+)
 
 # ==============================================================================
 # Input Data Editor
 # ==============================================================================
 
-initial_df = pd.DataFrame(
+DEFAULT_DATA = pd.DataFrame(
     [
         {
             "label": "base example",
@@ -67,7 +71,7 @@ initial_df = pd.DataFrame(
             "label": "skewed, symmetric start",
             "lower": 0.01,
             "upper": 0.5,
-            "confidence": 0.95,
+            "confidence": 0.49,
             "outer_odds": "",
             "alpha0": "1",
             "beta0": "1",
@@ -76,7 +80,7 @@ initial_df = pd.DataFrame(
             "label": "skewed, asymmetric start",
             "lower": 0.01,
             "upper": 0.5,
-            "confidence": 0.95,
+            "confidence": 0.49,
             "outer_odds": "",
             "alpha0": "3",
             "beta0": "2",
@@ -85,22 +89,38 @@ initial_df = pd.DataFrame(
             "label": "skewed, equal outer_odds",
             "lower": 0.01,
             "upper": 0.5,
-            "confidence": 0.95,
+            "confidence": 0.49,
             "outer_odds": "1",
-            "alpha0": "",
-            "beta0": "",
+            "alpha0": "2",
+            "beta0": "3",
         },
         {
             "label": "skewed, auto",
             "lower": 0.01,
             "upper": 0.5,
-            "confidence": 0.95,
+            "confidence": 0.49,
             "outer_odds": "maxent",
             "alpha0": "",
             "beta0": "",
         },
     ]
 )
+
+# Initialize session state for the DataFrame if not already present
+if "df" not in st.session_state:
+    st.session_state.df = DEFAULT_DATA.copy()
+# Initialize session state for user's edited data backup
+if "user_edited_df" not in st.session_state:
+    st.session_state.user_edited_df = None
+# Initialize a key for the data editor to force re-render
+if "data_editor_key" not in st.session_state:
+    st.session_state.data_editor_key = 0
+# Initialize auto-run state
+if "auto_run_state" not in st.session_state:
+    st.session_state.auto_run_state = True
+# Initialize flag to track if current data is example data
+if "is_example_data" not in st.session_state:
+    st.session_state.is_example_data = True
 
 st.subheader(
     "Input Parameters",
@@ -115,128 +135,224 @@ st.subheader(
 - (`alpha0`, `beta0`) starting point for the solver
   - defaults to `1.0`, `1.0`""",
 )
-edited_df = st.data_editor(initial_df, num_rows="dynamic")
 
-col1, col2 = st.columns([1, 4])
-with col1:
-    auto_run = st.toggle(
+# Data editor
+edited_df = st.data_editor(
+    st.session_state.df,
+    num_rows="dynamic",
+    key=f"data_editor_{st.session_state.data_editor_key}",
+)
+
+# Update session state with edited data
+if not edited_df.equals(st.session_state.df):
+    st.session_state.df = edited_df.copy()
+    # Update the example data flag
+    st.session_state.is_example_data = edited_df.equals(DEFAULT_DATA)
+
+# Buttons for table manipulation and running the solver
+col_buttons = st.columns(5)
+with col_buttons[0]:
+    st.session_state.auto_run_state = st.toggle(
         "Auto-run",
-        value=True,
+        value=st.session_state.auto_run_state,
         help="Automatically run solver when page loads or data changes",
+        key="auto_run_toggle",
     )
-with col2:
-    manual_run = st.button("Run Solver")
+with col_buttons[1]:
+    manual_run = st.button("Run Solver", type="primary")
+with col_buttons[2]:
+    if st.button("Clear Table"):
+        # If current df is not empty, save it as user_edited_df before clearing
+        if not st.session_state.df.empty:
+            st.session_state.user_edited_df = st.session_state.df.copy()
+        else:
+            st.session_state.user_edited_df = (
+                None  # Ensure no restore option if starting from empty
+            )
 
-if auto_run or manual_run:
+        st.session_state.df = pd.DataFrame(
+            columns=DEFAULT_DATA.columns
+        )  # Clear the table
+        st.session_state.data_editor_key += 1  # Increment key to force re-render
+        st.session_state.auto_run_state = False  # Disable auto-run
+        st.session_state.is_example_data = False  # Clear table is not example data
+        st.rerun()
+with col_buttons[3]:
+    # Use the tracked state instead of doing comparison every time
+    is_currently_example = st.session_state.is_example_data
+
+    if st.session_state.user_edited_df is not None and is_currently_example:
+        # Case 3: Has backup, example data in widget = Restore button
+        if st.button("Restore"):
+            st.session_state.df = st.session_state.user_edited_df.copy()
+            st.session_state.user_edited_df = None  # Clear backup after restoring
+            st.session_state.data_editor_key += 1  # Increment key to force re-render
+            st.session_state.is_example_data = False
+            st.rerun()
+    else:
+        # Cases 1, 2, 4: Show Example button
+        button_disabled = (
+            is_currently_example and st.session_state.user_edited_df is None
+        )
+        if st.button("Example", disabled=button_disabled):
+            # Cases 2, 4: Store current data as backup if it's not empty and different from example
+            if not st.session_state.df.empty and not is_currently_example:
+                st.session_state.user_edited_df = st.session_state.df.copy()
+            # Now, load the default data
+            st.session_state.df = DEFAULT_DATA.copy()
+            st.session_state.data_editor_key += 1
+            st.session_state.is_example_data = True
+            st.rerun()
+
+if st.session_state.auto_run_state or manual_run:
     results = []
     fig = go.Figure()
     x = np.linspace(0, 1, 400)
 
     for i, row in edited_df.iterrows():
-        try:
-            # --- Input Validation ---
-            if row["lower"] == row["upper"]:
-                row["lower"], row["upper"] = row["upper"], row["lower"]
-            if isclose(row["lower"], row["upper"]):
-                st.error(
-                    f"Row {i + 1}: Invalid bounds {row['lower']}, {row['upper']}. "
-                    "Ensure lower != upper."
-                )
-                continue
-            if not 0 <= row["lower"] < row["upper"] <= 1:
-                st.error(
-                    f"Row {i + 1}: Invalid bounds {row['lower']}, {row['upper']}. "
-                    "Ensure 0 <= lower < upper <= 1."
-                )
-                continue
-            if (
-                not 0 < row["confidence"] < 1
-                and not isclose(row["confidence"], 1)
-                and not isclose(row["confidence"], 0)
-            ):
-                st.error(
-                    f"Row {i + 1}: Confidence {row['confidence']} must be between 0 and 1."
-                )
-                continue
+        # Initialize display_label at the start of the loop iteration
+        display_label = f"row {i + 1}"
+        current_warnings = []
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")  # Always record warnings
+            try:
+                # --- Parse label ---
+                label_val = row.get(
+                    "label", ""
+                )  # Use .get to safely retrieve, default to empty string
+                if label_val:
+                    display_label = str(label_val).strip()
 
-            # --- Parse outer_odds ---
-            outer_odds_str = str(row["outer_odds"]).strip()
-            if outer_odds_str == "":
-                outer_odds: Any = None
-            else:
+                # --- Input Validation ---
+                # Ensure all numeric inputs are floats
                 try:
-                    outer_odds = float(outer_odds_str)
+                    lower_val = float(row["lower"])
+                    upper_val = float(row["upper"])
+                    confidence_val = float(row["confidence"])
                 except ValueError:
-                    outer_odds = (
-                        outer_odds_str  # Use as string (e.g., "maxent", "auto")
+                    st.error(
+                        f"{display_label}: Invalid numeric input in lower, upper, or confidence."
                     )
-
-            # --- Parse label ---
-            label = str(row["label"]).strip()
-            display_label = label if label else f"row {i + 1}"
-
-            # --- Parse alpha0 and beta0 ---
-            alpha0_str = str(row["alpha0"]).strip()
-            if not alpha0_str:
-                alpha0 = 1.0
-            else:
-                try:
-                    alpha0 = float(alpha0_str)
-                except ValueError:
-                    st.error(f"{display_label}: Invalid alpha0 {alpha0_str}")
                     continue
 
-            beta0_str = str(row["beta0"]).strip()
-            if not beta0_str:
-                beta0 = 1.0
-            else:
-                try:
-                    beta0 = float(beta0_str)
-                except ValueError:
-                    st.error(f"{display_label}: Invalid beta0 {beta0_str}")
+                if lower_val == upper_val:
+                    lower_val, upper_val = (
+                        upper_val,
+                        lower_val,
+                    )  # This swap logic seems odd, should be handled by validation
+                if isclose(lower_val, upper_val):
+                    st.error(
+                        f"{display_label}: Invalid bounds {lower_val}, {upper_val}. "
+                        "Ensure lower != upper."
+                    )
+                    continue
+                if not 0 <= lower_val < upper_val <= 1:
+                    st.error(
+                        f"{display_label}: Invalid bounds {lower_val}, {upper_val}. "
+                        "Ensure 0 <= lower_val < upper_val <= 1."
+                    )
+                    continue
+                if (
+                    not 0 < confidence_val < 1
+                    and not isclose(confidence_val, 1)
+                    and not isclose(confidence_val, 0)
+                ):
+                    st.error(
+                        f"{display_label}: Confidence {confidence_val} must be between 0 and 1."
+                    )
                     continue
 
-            # --- Run Solver ---
-            alpha, beta = find_beta_distribution(
-                row["lower"],
-                row["upper"],
-                row["confidence"],
-                alpha0,
-                beta0,
-                outer_odds,
-            )
+                # --- Parse outer_odds ---
+                outer_odds_input = row["outer_odds"]
+                outer_odds: Any = None  # Default to None
 
-            # --- Compute probability masses ---
-            prob_below = beta_dist.cdf(row["lower"], alpha, beta)
-            prob_above = 1 - beta_dist.cdf(row["upper"], alpha, beta)
+                if pd.isna(outer_odds_input) or (
+                    isinstance(outer_odds_input, str) and outer_odds_input.strip() == ""
+                ):
+                    outer_odds = None  # Explicitly set to None for empty/NA
+                elif isinstance(outer_odds_input, (int, float)):
+                    outer_odds = float(outer_odds_input)  # Already a number
+                else:  # It's a string
+                    outer_odds_str = str(outer_odds_input).strip().lower()
+                    if outer_odds_str in ("maxent", "auto"):
+                        outer_odds = outer_odds_str  # Keep as string for these keywords
+                    else:
+                        try:
+                            outer_odds = float(
+                                outer_odds_input
+                            )  # Try converting other strings to float
+                        except ValueError:
+                            st.error(
+                                f"{display_label}: Invalid outer_odds={outer_odds_input}. "
+                                "Must be a number, 'maxent', or 'auto'."
+                            )
+                            continue
 
-            results.append(
-                {
-                    "label": display_label,
-                    "alpha": f"{alpha:.4f}",
-                    "beta": f"{beta:.4f}",
-                    "P(<lower)": f"{prob_below:.4f}",
-                    "P(>upper)": f"{prob_above:.4f}",
-                    "outer_odds": f"{prob_above / prob_below:.4f}",
-                }
-            )
+                # --- Parse alpha0 and beta0 ---
+                alpha0_val = row["alpha0"]
+                if pd.isna(alpha0_val) or str(alpha0_val).strip() == "":
+                    alpha0 = 1.0
+                else:
+                    try:
+                        alpha0 = float(alpha0_val)
+                    except ValueError:
+                        st.error(f"{display_label}: Invalid alpha0 {alpha0_val}")
+                        continue
 
-            # --- Add to Plot ---
-            pdf = beta_dist.pdf(x, alpha, beta)
-            fig.add_trace(
-                go.Scatter(
-                    x=x,
-                    y=pdf,
-                    mode="lines",
-                    name=f"{display_label}: α={alpha:.2f}, β={beta:.2f}",
+                beta0_val = row["beta0"]
+                if pd.isna(beta0_val) or str(beta0_val).strip() == "":
+                    beta0 = 1.0
+                else:
+                    try:
+                        beta0 = float(beta0_val)
+                    except ValueError:
+                        st.error(f"{display_label}: Invalid beta0 {beta0_val}")
+                        continue
+
+                # --- Run Solver ---
+                alpha, beta = find_beta_distribution(
+                    lower_val,
+                    upper_val,
+                    confidence_val,
+                    alpha0,
+                    beta0,
+                    outer_odds,
                 )
-            )
 
-        except (RuntimeError, NotImplementedError) as e:
-            st.error(f"{display_label}: {e}")
-        # pylint: disable-next=broad-exception-caught
-        except Exception as e:
-            st.error(f"{display_label}: An unexpected error occurred: {e}")
+                # --- Compute probability masses and entropy ---
+                prob_below = beta_dist.cdf(lower_val, alpha, beta)
+                prob_above = 1 - beta_dist.cdf(upper_val, alpha, beta)
+                entropy_val = beta_entropy(np.array([alpha, beta]))
+
+                results.append(
+                    {
+                        "label": display_label,
+                        "alpha": f"{alpha:.4f}",
+                        "beta": f"{beta:.4f}",
+                        "P(<lower)": f"{prob_below:.4f}",
+                        "P(>upper)": f"{prob_above:.4f}",
+                        "outer_odds": f"{prob_above / prob_below:.4f}",
+                        "entropy": f"{entropy_val:.4f}",
+                        "warnings": "; ".join([str(warn.message) for warn in w]),
+                    }
+                )
+
+                # --- Add to Plot ---
+                pdf = beta_dist.pdf(x, alpha, beta)
+                fig.add_trace(
+                    go.Scatter(
+                        x=x,
+                        y=pdf,
+                        mode="lines",
+                        name=f"{display_label}: α={alpha:.2f}, β={beta:.2f}",
+                    )
+                )
+
+            except (RuntimeError, NotImplementedError) as e:
+                st.error(f"{display_label}: {e}")
+            # pylint: disable-next=broad-exception-caught
+            except Exception as e:
+                st.error(f"{display_label}: An unexpected error occurred: {e}")
 
     # ==============================================================================
     # Display Results
