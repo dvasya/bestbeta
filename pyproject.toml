@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bestbeta"
+version = "0.0.1-b"
+authors = [
+  { name="Your Name", email="you@example.com" },
+]
+description = "A package to find beta distributions matching confidence intervals."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "scipy",
+    "numpy",
+    "betaincder @ git+https://git@github.com/dvasya/betaincder.git@build-cleanup",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/dvasya/bestbeta"
+"Issues" = "https://github.com/dvasya/bestbeta/issues"
