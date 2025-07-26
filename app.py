@@ -163,10 +163,13 @@ if auto_run or manual_run:
             outer_odds_str = str(row["outer_odds"]).strip()
             if outer_odds_str == "":
                 outer_odds: Any = None
-            elif outer_odds_str.isnumeric():
-                outer_odds = float(outer_odds_str)
             else:
-                outer_odds = outer_odds_str  # Use as string (e.g., "maxent", "auto")
+                try:
+                    outer_odds = float(outer_odds_str)
+                except ValueError:
+                    outer_odds = (
+                        outer_odds_str  # Use as string (e.g., "maxent", "auto")
+                    )
 
             # --- Parse label ---
             label = str(row["label"]).strip()
@@ -176,20 +179,22 @@ if auto_run or manual_run:
             alpha0_str = str(row["alpha0"]).strip()
             if not alpha0_str:
                 alpha0 = 1.0
-            elif alpha0_str.isnumeric():
-                alpha0 = float(alpha0_str)
             else:
-                st.error(f"{display_label}: Invalid alpha0 {alpha0_str}")
-                continue
+                try:
+                    alpha0 = float(alpha0_str)
+                except ValueError:
+                    st.error(f"{display_label}: Invalid alpha0 {alpha0_str}")
+                    continue
 
             beta0_str = str(row["beta0"]).strip()
             if not beta0_str:
                 beta0 = 1.0
-            elif beta0_str.isnumeric():
-                beta0 = float(beta0_str)
             else:
-                st.error(f"{display_label}: Invalid beta0 {beta0_str}")
-                continue
+                try:
+                    beta0 = float(beta0_str)
+                except ValueError:
+                    st.error(f"{display_label}: Invalid beta0 {beta0_str}")
+                    continue
 
             # --- Run Solver ---
             alpha, beta = find_beta_distribution(

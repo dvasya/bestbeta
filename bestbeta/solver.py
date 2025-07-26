@@ -67,8 +67,8 @@ def beta_entropy_grad(params):
     trigamma_beta = special.polygamma(1, beta)
     trigamma_alpha_beta = special.polygamma(1, alpha + beta)
 
-    d_alpha = (alpha - 1) * trigamma_alpha + (alpha + beta - 2) * trigamma_alpha_beta
-    d_beta = (beta - 1) * trigamma_beta + (alpha + beta - 2) * trigamma_alpha_beta
+    d_alpha = -(alpha - 1) * trigamma_alpha + (alpha + beta - 2) * trigamma_alpha_beta
+    d_beta = -(beta - 1) * trigamma_beta + (alpha + beta - 2) * trigamma_alpha_beta
     return np.array([d_alpha, d_beta])
 
 
@@ -156,8 +156,27 @@ def find_beta_distribution(lower, upper, confidence, alpha0, beta0, outside_odds
     """
     Main solver function.
     """
+    # Input validation
+    if not (0 <= lower < upper <= 1):
+        raise ValueError("Invalid bounds: Ensure 0 <= lower < upper <= 1.")
+    if not (0 < confidence < 1):
+        raise ValueError("Invalid confidence: Confidence must be between 0 and 1.")
+    if alpha0 <= 0 or beta0 <= 0:
+        raise ValueError(
+            "Invalid initial guess: alpha0 and beta0 must be greater than 0."
+        )
+
     initial_guess = np.array([alpha0, beta0])
     bounds = [(1e-6, None), (1e-6, None)]
+
+    # Convert outside_odds to float if it's a number string
+    if isinstance(outside_odds, str) and outside_odds.lower() not in ("maxent", "auto"):
+        try:
+            outside_odds = float(outside_odds)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for outside_odds. Must be a number or 'maxent' or 'auto'. Got: {outside_odds}"
+            ) from e
 
     if isinstance(outside_odds, (int, float)):
         # --- Method 1: fsolve for specified odds ---
@@ -177,7 +196,7 @@ def find_beta_distribution(lower, upper, confidence, alpha0, beta0, outside_odds
         alpha, beta = fsolve(equations, initial_guess)
         return alpha, beta
 
-    if outside_odds == "maxent":
+    if outside_odds in ("maxent", "auto"):
         # --- Method 2: Max-Entropy (trust-constr) ---
         print("Using trust-constr for maximum entropy")
 
