@@ -4,7 +4,7 @@ Core solver functions for finding beta distributions.
 
 from scipy.optimize import fsolve, minimize, NonlinearConstraint
 from scipy.stats import beta as beta_dist
-import scipy.special as special
+from scipy import special
 import numpy as np
 from betaincder import betaincderp, betaincderq  # type: ignore[import-untyped]
 
@@ -52,12 +52,7 @@ def beta_entropy(params):
     alpha, beta = params
     if alpha <= 0 or beta <= 0:
         return -1e6  # Return a large negative value for invalid parameters
-    return (
-        special.betaln(alpha, beta)
-        - (alpha - 1) * special.digamma(alpha)
-        - (beta - 1) * special.digamma(beta)
-        + (alpha + beta - 2) * special.digamma(alpha + beta)
-    )
+    return beta_dist.entropy(alpha, beta)
 
 
 def beta_entropy_grad(params):
@@ -157,9 +152,9 @@ def find_beta_distribution(lower, upper, confidence, alpha0, beta0, outside_odds
     Main solver function.
     """
     # Input validation
-    if not (0 <= lower < upper <= 1):
+    if not 0 <= lower < upper <= 1:
         raise ValueError("Invalid bounds: Ensure 0 <= lower < upper <= 1.")
-    if not (0 < confidence < 1):
+    if not 0 < confidence < 1:
         raise ValueError("Invalid confidence: Confidence must be between 0 and 1.")
     if alpha0 <= 0 or beta0 <= 0:
         raise ValueError(
@@ -175,7 +170,7 @@ def find_beta_distribution(lower, upper, confidence, alpha0, beta0, outside_odds
             outside_odds = float(outside_odds)
         except ValueError as e:
             raise ValueError(
-                f"Invalid value for outside_odds. Must be a number or 'maxent' or 'auto'. Got: {outside_odds}"
+                f"Invalid outside_odds={outside_odds}. Must be a number or 'maxent' or 'auto'."
             ) from e
 
     if isinstance(outside_odds, (int, float)):

@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.stats import beta as beta_dist
 
-from bestbeta.solver import beta_entropy, find_beta_distribution
+from bestbeta.solver import find_beta_distribution
 
 st.set_page_config(layout="centered", page_icon="🎲", page_title="Best Beta")
 
@@ -212,7 +212,7 @@ if st.session_state.auto_run_state or manual_run:
     for i, row in edited_df.iterrows():
         # Initialize display_label at the start of the loop iteration
         display_label = f"row {i + 1}"
-        current_warnings = []
+        current_warnings: list[Warning] = []
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")  # Always record warnings
             try:
@@ -322,7 +322,7 @@ if st.session_state.auto_run_state or manual_run:
                 # --- Compute probability masses and entropy ---
                 prob_below = beta_dist.cdf(lower_val, alpha, beta)
                 prob_above = 1 - beta_dist.cdf(upper_val, alpha, beta)
-                entropy_val = beta_entropy(np.array([alpha, beta]))
+                entropy_val = beta_dist.entropy(alpha, beta)
 
                 results.append(
                     {

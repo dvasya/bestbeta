@@ -14,8 +14,12 @@ For obvious reasons, this software is, and shall forever remain, in beta.
 -   **Flexible Solver Modes**: Choose between different solver modes to explore the solution space.
 -   **Efficient and Accurate**: Uses the `betaincder` library for fast and precise computation of beta function gradients.
 -   **Modular and Extensible**: The core logic is structured as a Python library, making it easy to integrate into other projects.
+-   **Robust Optimization**: Progressive constraint tightening ensures reliable convergence from any starting point.
+-   **Batch Processing**: Run multiple scenarios simultaneously and compare results.
 
 ## Usage
+
+### Web Interface (Recommended)
 
 1.  Install the required dependencies:
     ```bash
@@ -28,6 +32,25 @@ For obvious reasons, this software is, and shall forever remain, in beta.
     ```
 
 3.  Open the provided URL in your web browser to access the interactive UI.
+
+### Command Line Interface
+
+For programmatic use, you can also use the CLI script:
+
+```bash
+python scripts/find_beta.py -l 0.2 -u 0.8 -c 0.95 --outside_odds maxent
+```
+
+## Input Parameters
+
+- **`lower`, `upper`**: Confidence interval bounds (must be between 0 and 1)
+- **`confidence`**: Desired confidence level (between 0 and 1)
+- **`outer_odds`**: Controls how probability mass is distributed outside the CI:
+  - Empty/None: Find closest solution to starting point
+  - Number (e.g., "1.0"): Equal probability below and above the interval
+  - "maxent": Maximum entropy solution
+  - "auto": Same as "maxent"
+- **`alpha0`, `beta0`**: Starting point for optimization (defaults to 1.0, 1.0)
 
 ## Credits and Acknowledgements
 
