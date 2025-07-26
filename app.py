@@ -91,7 +91,7 @@ DEFAULT_DATA = pd.DataFrame(
             "upper": 0.5,
             "confidence": 0.49,
             "outer_odds": "1",
-            "alpha0": "2",
+            "alpha0": "1",
             "beta0": "3",
         },
         {
