@@ -143,11 +143,187 @@ def loss_grad_fd(params, lower, upper, confidence):
 
 
 # ==============================================================================
+# Safety Checks
+# ==============================================================================
+
+
+def detect_flat_or_saddle_point(params, lower, upper, confidence, tol=1e-8):
+    """
+    Detect if we're at a flat point or saddle point.
+    Returns (is_flat_or_saddle, reason)
+    """
+
+    # Check gradient magnitude
+    grad = beta_entropy_grad(params)
+    grad_magnitude = np.linalg.norm(grad)
+
+    # Check Hessian eigenvalues
+    hess = beta_entropy_hess_fd(params)
+    eigenvals = np.linalg.eigvals(hess)
+
+    # Check constraint satisfaction
+    constraint_val = abs(constraint_function(params, lower, upper, confidence))
+
+    reasons = []
+
+    # Flat point: very small gradient
+    if grad_magnitude < tol:
+        reasons.append(f"flat_gradient({grad_magnitude:.2e})")
+
+    # Saddle point: Hessian has mixed signs (one positive, one negative eigenvalue)
+    if len(eigenvals) == 2 and eigenvals[0] * eigenvals[1] < 0:
+        reasons.append(
+            f"saddle_point(eigenvals=[{eigenvals[0]:.2e}, {eigenvals[1]:.2e}])"
+        )
+
+    # Poor conditioning: very large condition number
+    condition_number = max(abs(eigenvals)) / min(abs(eigenvals))
+    if condition_number > 1e6:  # Very ill-conditioned
+        reasons.append(f"ill_conditioned(cond={condition_number:.2e})")
+
+    # Constraint violation
+    if constraint_val > 1e-6:
+        reasons.append(f"constraint_violation({constraint_val:.2e})")
+
+    is_flat_or_saddle = len(reasons) > 0
+    reason = "; ".join(reasons) if reasons else "ok"
+
+    return is_flat_or_saddle, reason
+
+
+def safe_maxent_solve(lower, upper, confidence, alpha0, beta0, eps, tol, param_bounds):
+    """
+    Safe maximum entropy solver that tries multiple starting points if needed.
+    Only triggers when upper-lower > confidence (bimodal case).
+    """
+    # Only use safe mode for bimodal cases where upper-lower > confidence
+    if upper - lower <= confidence:
+        # For non-bimodal cases, just use the regular solver
+        return _maxent_solve(
+            lower, upper, confidence, alpha0, beta0, eps, tol, param_bounds
+        )
+
+    # Try the user's starting point first
+    try:
+        alpha1, beta1 = _maxent_solve(
+            lower, upper, confidence, alpha0, beta0, eps, tol, param_bounds
+        )
+        entropy1 = beta_dist.entropy(alpha1, beta1)
+
+        # Check for flat/saddle point
+        is_problematic, reason = detect_flat_or_saddle_point(
+            [alpha1, beta1], lower, upper, confidence
+        )
+
+        if is_problematic:
+            print(f"WARNING: Potential flat/saddle point detected: {reason}")
+            print(
+                f"  Solution: alpha={alpha1:.6f}, beta={beta1:.6f}, entropy={entropy1:.6f}"
+            )
+
+            # Try symmetric starting point
+            print("  Trying symmetric starting point (1,1)...")
+            try:
+                alpha2, beta2 = _maxent_solve(
+                    lower, upper, confidence, 1.0, 1.0, eps, tol, param_bounds
+                )
+                entropy2 = beta_dist.entropy(alpha2, beta2)
+
+                print(
+                    f"  Symmetric result: alpha={alpha2:.6f}, "
+                    f"beta={beta2:.6f}, entropy={entropy2:.6f}"
+                )
+
+                # Choose the better solution
+                if entropy2 > entropy1:
+                    print(
+                        "  WARNING: Using symmetric starting point result (higher entropy)"
+                    )
+                    return alpha2, beta2
+                print(
+                    "  WARNING: Keeping original result despite flat/saddle point"
+                )
+                return alpha1, beta1
+
+            except (RuntimeError, ValueError) as e:
+                print(f"  Symmetric starting point failed: {e}")
+                print("  WARNING: Keeping original result despite flat/saddle point")
+                return alpha1, beta1
+        else:
+            return alpha1, beta1
+
+    except (RuntimeError, ValueError) as e:
+        print(f"Original starting point failed: {e}")
+        print("Trying symmetric starting point (1,1)...")
+        alpha2, beta2 = _maxent_solve(
+            lower, upper, confidence, 1.0, 1.0, eps, tol, param_bounds
+        )
+        return alpha2, beta2
+
+
+def _maxent_solve(lower, upper, confidence, alpha0, beta0, eps, tol, param_bounds):
+    """
+    Internal maximum entropy solver.
+    """
+    initial_guess = np.array([alpha0, beta0])
+    bounds = [(param_bounds, None), (param_bounds, None)]
+
+    # Create entropy Hessian function with custom eps
+    def entropy_hess_with_eps(params):
+        """Finite difference Hessian with custom eps."""
+        alpha, beta = params
+        grad_alpha_plus = beta_entropy_grad((alpha + eps, beta))
+        grad = beta_entropy_grad(params)
+        d2H_dalpha2 = (grad_alpha_plus[0] - grad[0]) / eps
+        grad_beta_plus = beta_entropy_grad((alpha, beta + eps))
+        d2H_dbeta2 = (grad_beta_plus[1] - grad[1]) / eps
+        d2H_dalpha_dbeta = (grad_alpha_plus[1] - grad[1]) / eps
+        return np.array(
+            [[d2H_dalpha2, d2H_dalpha_dbeta], [d2H_dalpha_dbeta, d2H_dbeta2]]
+        )
+
+    constraints = [
+        NonlinearConstraint(
+            fun=lambda p: constraint_function(p, lower, upper, confidence),
+            lb=0,
+            ub=0,
+            jac=lambda p: constraint_grad_betaincder(p, lower, upper),
+        )
+    ]
+
+    res = minimize(
+        fun=lambda p: -beta_entropy(p),  # Minimize the negative entropy
+        x0=initial_guess,
+        method="trust-constr",
+        jac=lambda p: -beta_entropy_grad(p),
+        hess=entropy_hess_with_eps,
+        bounds=bounds,
+        constraints=constraints,
+        tol=tol,
+    )
+
+    if res.success:
+        return res.x[0], res.x[1]
+    raise RuntimeError(f"Maxent optimization failed: {res.message}")
+
+
+# ==============================================================================
 # Solver Dispatcher
 # ==============================================================================
 
 
-def find_beta_distribution(lower, upper, confidence, alpha0, beta0, outside_odds=None):
+def find_beta_distribution(
+    lower,
+    upper,
+    confidence,
+    alpha0,
+    beta0,
+    outer_odds=None,
+    eps=1e-6,
+    tol=1e-12,
+    param_bounds=1e-6,
+    safe_mode=True,
+):
     """
     Main solver function.
     """
@@ -162,22 +338,25 @@ def find_beta_distribution(lower, upper, confidence, alpha0, beta0, outside_odds
         )
 
     initial_guess = np.array([alpha0, beta0])
-    bounds = [(1e-6, None), (1e-6, None)]
+    bounds = [(param_bounds, None), (param_bounds, None)]
 
-    # Convert outside_odds to float if it's a number string
-    if isinstance(outside_odds, str) and outside_odds.lower() not in ("maxent", "auto"):
-        try:
-            outside_odds = float(outside_odds)
-        except ValueError as e:
-            raise ValueError(
-                f"Invalid outside_odds={outside_odds}. Must be a number or 'maxent' or 'auto'."
-            ) from e
+    # Convert outer_odds to float if it's a number string
+    if isinstance(outer_odds, str):
+        if not outer_odds:  # Empty string means nearest-feasible mode
+            outer_odds = None
+        elif outer_odds.lower() not in ("maxent", "auto"):
+            try:
+                outer_odds = float(outer_odds)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid outer_odds={outer_odds}. Must be a number or 'maxent' or 'auto'."
+                ) from e
 
-    if isinstance(outside_odds, (int, float)):
+    if isinstance(outer_odds, (int, float)):
         # --- Method 1: fsolve for specified odds ---
         print("Using fsolve for specified odds")
         total_outside_prob = 1 - confidence
-        prob_below = total_outside_prob / (outside_odds + 1)
+        prob_below = total_outside_prob / (outer_odds + 1)
         prob_above = total_outside_prob - prob_below
 
         def equations(params):
@@ -191,78 +370,48 @@ def find_beta_distribution(lower, upper, confidence, alpha0, beta0, outside_odds
         alpha, beta = fsolve(equations, initial_guess)
         return alpha, beta
 
-    if outside_odds in ("maxent", "auto"):
+    if outer_odds in ("maxent", "auto"):
         # --- Method 2: Max-Entropy (trust-constr) ---
         print("Using trust-constr for maximum entropy")
 
-        # Progressive constraint tightening approach
-        # Start with relaxed constraint and gradually tighten to exact constraint
-        tolerance_levels = [1e-3, 1e-6, 1e-9, 1e-12]
-        current_guess = initial_guess
-
-        for tol in tolerance_levels:
-            constraints = [
-                NonlinearConstraint(
-                    fun=lambda p: constraint_function(p, lower, upper, confidence),
-                    lb=-tol,
-                    ub=tol,
-                    jac=lambda p: constraint_grad_betaincder(p, lower, upper),
-                )
-            ]
-
-            res_maxent = minimize(
-                fun=lambda p: -beta_entropy(p),  # Minimize the negative entropy
-                x0=current_guess,
-                method="trust-constr",
-                jac=lambda p: -beta_entropy_grad(p),
-                hess=lambda p: -beta_entropy_hess_fd(p),
-                bounds=bounds,
-                constraints=constraints,
-                tol=tol,
+        if safe_mode:
+            return safe_maxent_solve(
+                lower, upper, confidence, alpha0, beta0, eps, tol, param_bounds
             )
-
-            if res_maxent.success:
-                current_guess = res_maxent.x
-            else:
-                # If this tolerance level fails, try the next one
-                continue
-
-        # Final optimization with exact constraint
-        final_constraints = [
-            NonlinearConstraint(
-                fun=lambda p: constraint_function(p, lower, upper, confidence),
-                lb=0,
-                ub=0,
-                jac=lambda p: constraint_grad_betaincder(p, lower, upper),
-            )
-        ]
-
-        final_res = minimize(
-            fun=lambda p: -beta_entropy(p),
-            x0=current_guess,
-            method="trust-constr",
-            jac=lambda p: -beta_entropy_grad(p),
-            hess=lambda p: -beta_entropy_hess_fd(p),
-            bounds=bounds,
-            constraints=final_constraints,
-            tol=1e-12,
+        return _maxent_solve(
+            lower, upper, confidence, alpha0, beta0, eps, tol, param_bounds
         )
-
-        if final_res.success:
-            return final_res.x[0], final_res.x[1]
-        raise RuntimeError(f"Maxent optimization failed: {final_res.message}")
 
     # --- Method 3: Closest Solution (trust-constr) ---
     print("Using trust-constr for closest solution")
+
+    # Create loss Hessian function with custom eps
+    def loss_hess_with_eps(params, *_args):
+        """Hessian of the loss function with custom eps."""
+        alpha, beta = params
+        grad_alpha_plus = loss_grad_betaincder(
+            (alpha + eps, beta), lower, upper, confidence
+        )
+        grad = loss_grad_betaincder(params, lower, upper, confidence)
+        d2L_dalpha2 = (grad_alpha_plus[0] - grad[0]) / eps
+        grad_beta_plus = loss_grad_betaincder(
+            (alpha, beta + eps), lower, upper, confidence
+        )
+        d2L_dbeta2 = (grad_beta_plus[1] - grad[1]) / eps
+        d2L_dalpha_dbeta = (grad_alpha_plus[1] - grad[1]) / eps
+        return np.array(
+            [[d2L_dalpha2, d2L_dalpha_dbeta], [d2L_dalpha_dbeta, d2L_dbeta2]]
+        )
+
     res = minimize(
         fun=loss_function,
         x0=initial_guess,
         args=(lower, upper, confidence),
         method="trust-constr",
         jac=loss_grad_betaincder,
-        hess=loss_hessian_betaincder,
+        hess=loss_hess_with_eps,
         bounds=bounds,
-        tol=1e-12,
+        tol=tol,
     )
     if res.success:
         return res.x[0], res.x[1]

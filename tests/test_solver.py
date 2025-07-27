@@ -8,10 +8,11 @@ from scipy.stats import beta as beta_dist
 from bestbeta.solver import (
     loss_grad_betaincder,
     loss_grad_fd,
-    find_beta_distribution,
     beta_entropy,
     beta_entropy_grad,
 )
+from bestbeta import find_beta_distribution
+from .conftest import check_entropy_gradient_consistency
 
 
 @pytest.mark.parametrize(
@@ -76,12 +77,12 @@ def test_beta_entropy_and_grad(alpha, beta):
 
 
 @pytest.mark.parametrize(
-    "lower, upper, confidence, alpha0, beta0, outside_odds, expected_alpha, expected_beta",
+    "lower, upper, confidence, alpha0, beta0, outer_odds, expected_alpha, expected_beta",
     [
         # fsolve mode (equal odds)
         (0.1, 0.9, 0.8, 1.0, 1.0, 1.0, 1.0, 1.0),  # Uniform distribution
         (0.05, 0.95, 0.9, 1.0, 1.0, 1.0, 1.0, 1.0),  # Uniform distribution
-        # Closest solution mode (no outside_odds, should converge to a solution near alpha0, beta0)
+        # Closest solution mode (no outer_odds, should converge to a solution near alpha0, beta0)
         (0.1, 0.9, 0.95, 1.0, 1.0, None, 1.5, 1.5),  # Example from original script
         (0.2, 0.8, 0.9, 5.0, 5.0, None, 5.0, 5.0),  # Should stay close to initial guess
         # Maxent mode (hard to predict exact values, so we check for success and reasonable values)
@@ -90,13 +91,13 @@ def test_beta_entropy_and_grad(alpha, beta):
     ],
 )
 def test_find_beta_distribution(
-    lower, upper, confidence, alpha0, beta0, outside_odds, expected_alpha, expected_beta
+    lower, upper, confidence, alpha0, beta0, outer_odds, expected_alpha, expected_beta
 ):
     """
     Tests the main find_beta_distribution function for different modes.
     """
     alpha, beta = find_beta_distribution(
-        lower, upper, confidence, alpha0, beta0, outside_odds
+        lower, upper, confidence, alpha0, beta0, outer_odds
     )
 
     # Basic validation for all modes
@@ -104,7 +105,7 @@ def test_find_beta_distribution(
     assert beta > 0
 
     # Specific checks for fsolve mode (where we can predict exact results)
-    if outside_odds == 1.0:
+    if outer_odds == 1.0:
         assert alpha == pytest.approx(expected_alpha, rel=1e-3)
         assert beta == pytest.approx(expected_beta, rel=1e-3)
         # Verify CI coverage for fsolve mode
@@ -115,7 +116,7 @@ def test_find_beta_distribution(
 
         # Verify probability split for fsolve mode
         total_outside_prob = 1 - confidence
-        prob_below = total_outside_prob / (outside_odds + 1)
+        prob_below = total_outside_prob / (outer_odds + 1)
         prob_above = total_outside_prob - prob_below
         assert beta_dist.cdf(lower, alpha, beta) == pytest.approx(prob_below, rel=1e-3)
         assert (1 - beta_dist.cdf(upper, alpha, beta)) == pytest.approx(
@@ -138,23 +139,23 @@ def test_find_beta_distribution(
 
 
 @pytest.mark.parametrize(
-    "lower, upper, confidence, alpha0, beta0, outside_odds",
+    "lower, upper, confidence, alpha0, beta0, outer_odds",
     [
         (0.9, 0.1, 0.8, 1.0, 1.0, None),  # Invalid bounds
         (0.1, 0.9, 1.1, 1.0, 1.0, None),  # Invalid confidence
         (0.1, 0.9, 0.8, -1.0, 1.0, None),  # Invalid initial alpha
         (0.1, 0.9, 0.8, 1.0, -1.0, None),  # Invalid initial beta
-        (0.1, 0.9, 0.8, 1.0, 1.0, "invalid_mode"),  # Invalid outside_odds string
+        (0.1, 0.9, 0.8, 1.0, 1.0, "invalid_mode"),  # Invalid outer_odds string
     ],
 )
 def test_find_beta_distribution_invalid_inputs(
-    lower, upper, confidence, alpha0, beta0, outside_odds
+    lower, upper, confidence, alpha0, beta0, outer_odds
 ):
     """
     Tests that find_beta_distribution handles invalid inputs gracefully.
     """
     with pytest.raises((RuntimeError, ValueError, NotImplementedError)):
-        find_beta_distribution(lower, upper, confidence, alpha0, beta0, outside_odds)
+        find_beta_distribution(lower, upper, confidence, alpha0, beta0, outer_odds)
 
 
 @pytest.mark.parametrize(
@@ -182,23 +183,9 @@ def test_entropy_gradient_consistency(alpha, beta):
     )
 
     # Test that our gradient is consistent with finite differences of SciPy's entropy
-    eps = 1e-6
-    our_grad = beta_entropy_grad([alpha, beta])
+    is_consistent, our_grad, fd_grad = check_entropy_gradient_consistency(alpha, beta)
 
-    # Finite difference gradient using SciPy's entropy
-    entropy_alpha_plus = beta_dist.entropy(alpha + eps, beta)
-    entropy_alpha_minus = beta_dist.entropy(alpha - eps, beta)
-    entropy_beta_plus = beta_dist.entropy(alpha, beta + eps)
-    entropy_beta_minus = beta_dist.entropy(alpha, beta - eps)
-
-    fd_grad = np.array(
-        [
-            (entropy_alpha_plus - entropy_alpha_minus) / (2 * eps),
-            (entropy_beta_plus - entropy_beta_minus) / (2 * eps),
-        ]
-    )
-
-    assert np.allclose(our_grad, fd_grad, rtol=1e-4, atol=1e-6), (
+    assert is_consistent, (
         f"Entropy gradient mismatch for alpha={alpha}, beta={beta}:\n"
         f"Our gradient: {our_grad}\n"
         f"Finite diff gradient: {fd_grad}"

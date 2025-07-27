@@ -3,7 +3,7 @@ Finds a beta distribution based on the given confidence interval and solver mode
 """
 
 import click
-from bestbeta.solver import find_beta_distribution
+from bestbeta import find_beta_distribution
 
 
 @click.command()
@@ -30,7 +30,7 @@ from bestbeta.solver import find_beta_distribution
 )
 @click.option(
     "-o",
-    "--outside_odds",
+    "--outer_odds",
     type=str,
     default="",
     help=(
@@ -52,31 +52,32 @@ from bestbeta.solver import find_beta_distribution
     default=1.0,
     help="Initial guess for the beta parameter.",
 )
-def main(lower, upper, confidence, outside_odds, alpha0, beta0):
+def main(lower, upper, confidence, outer_odds, alpha0, beta0):
     """Finds a beta distribution based on the given confidence interval and solver mode."""
 
-    # Convert outside_odds to float if it's a number string
+    # Convert outer_odds to float if it's a number string
     try:
-        if outside_odds and outside_odds.lower() != "maxent":
-            outside_odds = float(outside_odds)
+        if outer_odds and outer_odds.lower() not in ("maxent", "auto"):
+            outer_odds = float(outer_odds)
     except ValueError:
         click.echo(
-            "Error: Invalid value for --outside_odds. Must be a number or 'maxent'. "
-            f"Got: {outside_odds}",
+            "Error: Invalid value for --outer_odds. Must be a number or 'maxent'. "
+            f"Got: {outer_odds}",
             err=True,
         )
         return
 
     click.echo(
-        f"Finding beta for {confidence * 100}% CI [{lower}, {upper}] with mode: {outside_odds}"
+        f"Finding beta for {confidence * 100}% CI [{lower}, {upper}] with mode: {outer_odds}"
     )
     click.echo(f"Initial guess: alpha0={alpha0}, beta0={beta0}")
 
     try:
         alpha, beta = find_beta_distribution(
-            lower, upper, confidence, alpha0, beta0, outside_odds
+            lower, upper, confidence, alpha0, beta0, outer_odds
         )
         click.echo(f"\nResult: alpha = {alpha:.6f}, beta = {beta:.6f}")
+    # pylint: disable-next=broad-exception-caught
     except Exception as e:
         click.echo(f"\nAn error occurred: {e}", err=True)
 

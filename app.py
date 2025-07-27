@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.stats import beta as beta_dist
 
-from bestbeta.solver import find_beta_distribution
+from bestbeta import find_beta_distribution
 
 st.set_page_config(layout="centered", page_icon="🎲", page_title="Best Beta")
 
@@ -348,7 +348,7 @@ if st.session_state.auto_run_state or manual_run:
                     )
                 )
 
-            except (RuntimeError, NotImplementedError) as e:
+            except (RuntimeError, ValueError, NotImplementedError) as e:
                 st.error(f"{display_label}: {e}")
             # pylint: disable-next=broad-exception-caught
             except Exception as e:
